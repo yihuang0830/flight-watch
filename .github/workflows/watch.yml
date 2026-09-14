@@ -1,11 +1,18 @@
 name: Flight Watch
 
 on:
-  # 每 30 分钟扫一次。用固定间隔而非定点时刻，是因为 GitHub cron 只认 UTC、
-  # 不处理夏令时；「何时该发报告」交给代码用时区库判断（notify.due_report_slot），
-  # 这样 11 月换冬令时不用改任何配置。
+  # 主触发源：外部定时服务（cron-job.org）POST 到 repository_dispatch。
+  #
+  # 为什么不靠 GitHub 自己的 cron：实测 "*/30" 在 11.5 小时里只触发了 1 次。
+  # GitHub 官方只承认"高峰期可能延迟"，实际上高频 schedule 会被大量丢弃，
+  # 导致 09:00 的定时报告整个错过。外部服务触发则是准时的。
+  repository_dispatch:
+    types: [scan]
+
+  # 保留作兜底：外部服务万一挂了，这里还能偶尔跑一跑。
   schedule:
     - cron: "*/30 * * * *"
+
   workflow_dispatch:
 
 permissions:
