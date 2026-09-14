@@ -83,26 +83,64 @@ watches:
 
 ## 微信提醒
 
-跌破 `target_price`（当前 800 USD）时推送到微信，走 [Server酱](https://sct.ftqq.com/)。
+每轮抓完都推送一份全量报告到微信，走 [Server酱](https://sct.ftqq.com/)。
+
+**为什么每轮都发**，而不是只在降价时发：`target_price` 设为 810 USD，
+而当前最低价约 992 —— 这个阈值可能几个月都不触发。只在降价时发的话，
+你收不到消息时无法区分「没降价」和「监控已经挂了」。
+每轮都发，消息本身就是心跳。
+
+消息内容：
+- 有航线跌破目标价 → 标题带 🎯，正文先列达标航线的具体航班
+- 无论有没有达标 → 附上全部 20 条航线一览表，含**较上轮涨跌**
+  （这是每轮消息里唯一有增量的信息，否则每天 5 条一样的表格只会沦为噪音）
 
 **配置**（一次性）：
 1. 访问 [sct.ftqq.com](https://sct.ftqq.com/) 微信扫码登录，拿到 SendKey
-2. 仓库 Settings → Secrets and variables → Actions → New repository secret
-   名称 `SERVERCHAN_SEND_KEY`，值粘贴 SendKey
-3. 本地测试：`SERVERCHAN_SEND_KEY=xxx python -m flightwatch notify`
+2. `gh secret set SERVERCHAN_SEND_KEY -R <owner>/<repo> --body "你的key"`
+3. 本地测试：`SERVERCHAN_SEND_KEY=xxx python -m flightwatch notify --dry-run`
 
-**免费额度只有 5 条/天**，所以做了两层保护：
-- 一轮只发 **一条** 消息，把所有达标航线聚合进去（而不是 20 条航线发 20 条）
-- 同一航线同样的价格不重复发；只有「更便宜了」才再发一次；
-  价格涨回目标价之上会清除记录，下次再跌破可以重新提醒
+### 额度是硬约束
+
+| 方案 | 价格 | 额度 |
+|---|---|---|
+| 免费 | 0 | **5 条/天** |
+| 月付 | 8 元 | 1000 条/天 |
+| 年付 | 39 元 | 1000 条/天 |
+
+新用户送 **7 天全功能试用**（试用期同订阅会员，1000 条/天）。
+
+一天 5 轮 × 每轮 1 条 = **5 条，正好卡满免费额度**。试用期结束后若不续费，
+任何额外发送（手动触发、重试）都会让当天第 6 条静默失败 —— 而静默失败
+恰恰会毁掉心跳的意义。届时二选一：年付 39 元，或把推送减到 3 轮
+（数据照常 5 轮抓，只是少推两次）。
 
 不想被打扰：`python -m flightwatch watch --no-notify`
-想看会发什么但不真发：`python -m flightwatch notify --dry-run`
+关掉每轮推送、只在降价时发：把 config 里 `notify_every_run` 改成 `false`
 
 ## 24/7 运行
 
-`.github/workflows/watch.yml` 已配好：每天两轮，把 `flights.db` 提交回仓库保存历史，
-报告输出到 `docs/index.html`（开 GitHub Pages 即可网页查看）。免费、无需服务器。
+`.github/workflows/watch.yml` 每天跑 5 轮，美国中部时间
+**09:00 / 13:00 / 16:30 / 20:30 / 23:30**，
+把 `flights.db` 提交回仓库保存历史，报告输出到 `docs/index.html`。免费、无需服务器。
+
+### 夏令时怎么处理
+
+GitHub cron 只认 UTC，不处理夏令时 —— 11 月换冬令时后，固定的 UTC 时刻
+会让你的本地时间整体偏一小时。
+
+解法：**夏、冬两套时刻表都挂上**（共 10 条 cron），同一时段会触发两次
+（相差 1 小时），多出来的那次由 `flightwatch gate` 滤掉 ——
+距上次成功抓取不足 2 小时就跳过本轮。
+
+选「按间隔判断」而非「按时刻硬匹配」，是因为 **GitHub 定时任务经常延迟
+几十分钟**，硬匹配会把真正该跑的轮次误杀。目标时段最小间隔 3 小时，
+而夏冬令时的重复触发相差 1 小时，两者可以可靠区分。
+
+手动触发（workflow_dispatch）绕过闸门，随时想抓就抓。
+
+> 定时任务本身也不准时：09:00 可能变成 09:20 甚至更晚，偶尔整轮跳过。
+> 这是平台限制，不是配置问题。
 
 不建议用本地 cron —— 笔记本合盖就断了。
 
