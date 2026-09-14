@@ -56,30 +56,50 @@ def pick_alerts(conn, summaries: list[dict]) -> list[dict]:
     return alerts
 
 
-def build_message(alerts: list[dict]) -> tuple[str, str]:
+def build_message(alerts: list[dict], summaries: list[dict]) -> tuple[str, str]:
+    """达标航线给明细，其余航线给一览表。
+
+    触发靠 alerts，但消息里附上全部 20 条航线 —— 捡漏时你需要看到全局
+    才知道这个价到底值不值得下手，而不是只看到孤零零一条。
+    """
     cur = alerts[0]["watch"].currency
     best = min(a["price"] for a in alerts)
-    if len(alerts) == 1:
-        a = alerts[0]
-        title = f"✈️ {a['watch'].origin}→{a['watch'].dest} {cur} {a['price']}"
-    else:
-        title = f"✈️ {len(alerts)} 条航线跌破目标价，最低 {cur} {best}"
+    n = len(alerts)
+    title = (f"✈️ {alerts[0]['watch'].origin}→{alerts[0]['watch'].dest} {cur} {best}"
+             if n == 1 else f"✈️ {n} 条航线跌破目标价，最低 {cur} {best}")
 
-    lines = []
+    lines = [f"## 🎯 跌破目标价的 {n} 条\n"]
     for a in sorted(alerts, key=lambda x: x["price"]):
         w = a["watch"]
         drop = f"（上次提醒 {a['prev']}）" if a["prev"] else ""
-        lines.append(f"### {w.origin} → {w.dest} — **{cur} {a['price']}**{drop}\n")
+        lines.append(f"**{w.origin} → {w.dest} — {cur} {a['price']}**{drop}\n")
         lines.append("| 价格 | 出发 | 起降 | 中转 | 航司 | 经停 |")
         lines.append("|---|---|---|---|---|---|")
         for o in a["offers"][:3]:
             stops = "直飞" if o["stops"] == 0 else f"{o['stops']}转"
             lines.append(
                 f"| {cur} {o['price']} | {o['depart_date'][5:]} | "
-                f"{o['dep_time']}→{o['arr_time']} | {stops} | "
-                f"{o['airlines']} | {o['route']} |"
+                f"{o['dep_time']}→{o['arr_time']} | {stops} | {o['airlines']} | {o['route']} |"
             )
         lines.append("")
+
+    from .report import _LEVEL_CN, by_price
+
+    ranked = [s for s in by_price(summaries) if s["current"] is not None]
+    lines.append(f"\n## 📋 全部 {len(ranked)} 条航线\n")
+    lines.append("| # | 航线 | 最低价 | 最便宜日 | Google | 经停 |")
+    lines.append("|---|---|---|---|---|---|")
+    for i, s in enumerate(ranked, 1):
+        w = s["watch"]
+        top = s["latest_offers"][0] if s["latest_offers"] else None
+        lvl = (s.get("levels") or {}).get(top["depart_date"], "") if top else ""
+        mark = " 🎯" if w.target_price and s["current"] <= w.target_price else ""
+        lines.append(
+            f"| {i} | {w.origin}→{w.dest}{mark} | **{cur} {s['current']}** | "
+            f"{top['depart_date'][5:] if top else '-'} | {_LEVEL_CN.get(lvl, '-')} | "
+            f"{top['route'] if top else '-'} |"
+        )
+
     lines.append("\n> 价格随时会变，看到就尽快去 Google Flights 核实下单。")
     return title, "\n".join(lines)
 
@@ -93,7 +113,7 @@ def maybe_notify(conn, summaries: list[dict], *, dry_run: bool = False) -> str:
     if not alerts:
         return "无需提醒（没有航线跌破目标价，或已提醒过且没更便宜）"
 
-    title, desp = build_message(alerts)
+    title, desp = build_message(alerts, summaries)
     if dry_run:
         return f"[试运行] 本应推送: {title}\n\n{desp}"
     if not key:
