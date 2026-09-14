@@ -62,13 +62,23 @@ def build_message(alerts: list[dict], summaries: list[dict]) -> tuple[str, str]:
     触发靠 alerts，但消息里附上全部 20 条航线 —— 捡漏时你需要看到全局
     才知道这个价到底值不值得下手，而不是只看到孤零零一条。
     """
-    cur = alerts[0]["watch"].currency
-    best = min(a["price"] for a in alerts)
-    n = len(alerts)
-    title = (f"✈️ {alerts[0]['watch'].origin}→{alerts[0]['watch'].dest} {cur} {best}"
-             if n == 1 else f"✈️ {n} 条航线跌破目标价，最低 {cur} {best}")
+    from .report import _LEVEL_CN, by_price
 
-    lines = [f"## 🎯 跌破目标价的 {n} 条\n"]
+    ranked = [s for s in by_price(summaries) if s["current"] is not None]
+    cur = ranked[0]["watch"].currency if ranked else "USD"
+    n = len(alerts)
+
+    if n:
+        best = min(a["price"] for a in alerts)
+        title = (f"🎯 {alerts[0]['watch'].origin}→{alerts[0]['watch'].dest} {cur} {best}"
+                 if n == 1 else f"🎯 {n} 条航线跌破目标价，最低 {cur} {best}")
+    else:
+        # 心跳模式：没有航线达标也发，收不到消息就说明监控挂了
+        low = ranked[0]
+        title = (f"✈️ 最低 {cur} {low['current']} · "
+                 f"{low['watch'].origin}→{low['watch'].dest}")
+
+    lines = [f"## 🎯 跌破目标价的 {n} 条\n"] if n else []
     for a in sorted(alerts, key=lambda x: x["price"]):
         w = a["watch"]
         drop = f"（上次提醒 {a['prev']}）" if a["prev"] else ""
@@ -83,35 +93,36 @@ def build_message(alerts: list[dict], summaries: list[dict]) -> tuple[str, str]:
             )
         lines.append("")
 
-    from .report import _LEVEL_CN, by_price
-
-    ranked = [s for s in by_price(summaries) if s["current"] is not None]
     lines.append(f"\n## 📋 全部 {len(ranked)} 条航线\n")
-    lines.append("| # | 航线 | 最低价 | 最便宜日 | Google | 经停 |")
+    lines.append("| # | 航线 | 最低价 | 较上轮 | 最便宜日 | 经停 |")
     lines.append("|---|---|---|---|---|---|")
     for i, s in enumerate(ranked, 1):
         w = s["watch"]
         top = s["latest_offers"][0] if s["latest_offers"] else None
         lvl = (s.get("levels") or {}).get(top["depart_date"], "") if top else ""
         mark = " 🎯" if w.target_price and s["current"] <= w.target_price else ""
+        d = s.get("delta_prev")
+        chg = "—" if not d else (f"↓{abs(d)}" if d < 0 else f"↑{d}")
         lines.append(
-            f"| {i} | {w.origin}→{w.dest}{mark} | **{cur} {s['current']}** | "
-            f"{top['depart_date'][5:] if top else '-'} | {_LEVEL_CN.get(lvl, '-')} | "
-            f"{top['route'] if top else '-'} |"
+            f"| {i} | {w.origin}→{w.dest}{mark} | **{cur} {s['current']}** | {chg} | "
+            f"{top['depart_date'][5:] if top else '-'} | {top['route'] if top else '-'} |"
         )
 
     lines.append("\n> 价格随时会变，看到就尽快去 Google Flights 核实下单。")
     return title, "\n".join(lines)
 
 
-def maybe_notify(conn, summaries: list[dict], *, dry_run: bool = False) -> str:
+def maybe_notify(conn, summaries: list[dict], *, dry_run: bool = False,
+                 every_run: bool = False) -> str:
     """返回一句人类可读的结果说明。"""
     from . import store
 
     key = os.environ.get("SERVERCHAN_SEND_KEY", "").strip()
     alerts = pick_alerts(conn, summaries)
-    if not alerts:
+    if not alerts and not every_run:
         return "无需提醒（没有航线跌破目标价，或已提醒过且没更便宜）"
+    if not any(s["current"] is not None for s in summaries):
+        return "无数据可推送"
 
     title, desp = build_message(alerts, summaries)
     if dry_run:

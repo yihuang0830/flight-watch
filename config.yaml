@@ -6,7 +6,10 @@ defaults:
   seat: economy
   passengers: 1
   keep_top: 8          # 每条航线每天最多存 8 档报价
-  target_price: 810    # 跌破这个价就微信提醒（消息里会附上全部 20 条航线）
+  target_price: 810    # 跌破这个价的航线会在消息里打 🎯
+  # 每轮都推送一份全量报告（一天 2 条，Server酱免费额度 5 条/天足够）。
+  # 好处是消息本身就是心跳：哪天没收到，就说明监控挂了。
+  notify_every_run: true
   # 刻意不设 max_stops：实测限制中转会让你错过更便宜的票
 
 watches:

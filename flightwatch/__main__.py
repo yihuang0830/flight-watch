@@ -39,8 +39,10 @@ def cmd_watch(args) -> int:
     print(f"\n完成: {n_ok} 成功 / {n_fail} 失败  →  {args.db}")
 
     if not args.no_notify:
+        st = config.load_settings(args.config)
         summaries = [report.summarize(conn, w) for w in watches]
-        print(notify.maybe_notify(conn, summaries, dry_run=args.dry_run))
+        print(notify.maybe_notify(conn, summaries, dry_run=args.dry_run,
+                                  every_run=st["notify_every_run"]))
 
     # 全军覆没时用退出码报警，便于 cron / CI 感知
     if n_ok == 0 and n_fail > 0:
@@ -51,9 +53,11 @@ def cmd_watch(args) -> int:
 
 def cmd_notify(args) -> int:
     watches = config.load(args.config)
+    st = config.load_settings(args.config)
     conn = store.connect(args.db)
     summaries = [report.summarize(conn, w) for w in watches]
-    print(notify.maybe_notify(conn, summaries, dry_run=args.dry_run))
+    print(notify.maybe_notify(conn, summaries, dry_run=args.dry_run,
+                              every_run=st["notify_every_run"]))
     return 0
 
 

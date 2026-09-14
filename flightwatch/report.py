@@ -27,6 +27,7 @@ def summarize(conn, watch) -> dict:
         "high": None,
         "percentile": None,
         "delta_7d": None,
+        "delta_prev": None,     # 与上一轮相比的涨跌，每轮都推送时这是唯一有增量的信息
         "target_hit": False,
     }
     if not hist:
@@ -42,6 +43,9 @@ def summarize(conn, watch) -> dict:
     if len(prices) > 1:
         cheaper_than = sum(1 for p in prices if p > current)
         out["percentile"] = round(100 * cheaper_than / (len(prices) - 1))
+
+    if len(prices) >= 2:
+        out["delta_prev"] = current - prices[-2]
 
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)).isoformat()
     old = [p for t, p in hist if t < cutoff]

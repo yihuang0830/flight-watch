@@ -71,3 +71,10 @@ def load(path: str | Path) -> list[Watch]:
             )
         )
     return out
+
+
+def load_settings(path: str | Path) -> dict:
+    """全局设置（非逐航线），如是否每轮都推送。"""
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    d = raw.get("defaults") or {}
+    return {"notify_every_run": bool(d.get("notify_every_run", False))}
