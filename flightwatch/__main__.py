@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import config, fetch, report, store
+from . import config, fetch, notify, report, store
 
 
 def cmd_watch(args) -> int:
@@ -38,10 +38,22 @@ def cmd_watch(args) -> int:
 
     print(f"\n完成: {n_ok} 成功 / {n_fail} 失败  →  {args.db}")
 
+    if not args.no_notify:
+        summaries = [report.summarize(conn, w) for w in watches]
+        print(notify.maybe_notify(conn, summaries, dry_run=args.dry_run))
+
     # 全军覆没时用退出码报警，便于 cron / CI 感知
     if n_ok == 0 and n_fail > 0:
         print("所有抓取均失败 —— 数据源可能已失效", file=sys.stderr)
         return 1
+    return 0
+
+
+def cmd_notify(args) -> int:
+    watches = config.load(args.config)
+    conn = store.connect(args.db)
+    summaries = [report.summarize(conn, w) for w in watches]
+    print(notify.maybe_notify(conn, summaries, dry_run=args.dry_run))
     return 0
 
 
@@ -73,7 +85,14 @@ def main(argv=None) -> int:
     w.add_argument("--proxy", default=None)
     w.add_argument("--delay", type=float, default=fetch.DEFAULT_DELAY,
                    help="每次查询之间的间隔秒数，默认 3")
+    w.add_argument("--no-notify", action="store_true", help="本轮不推送")
+    w.add_argument("--dry-run", action="store_true",
+                   help="只打印将要推送的内容，不真发、不记账")
     w.set_defaults(func=cmd_watch)
+
+    n = sub.add_parser("notify", parents=[common], help="基于已有数据检查并推送")
+    n.add_argument("--dry-run", action="store_true")
+    n.set_defaults(func=cmd_notify)
 
     r = sub.add_parser("report", parents=[common], help="基于历史数据生成报告")
     r.add_argument("--html", default=None, help="同时写出 HTML 报告到该路径")

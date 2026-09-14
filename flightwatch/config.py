@@ -66,7 +66,7 @@ def load(path: str | Path) -> list[Watch]:
                 currency=w.get("currency", defaults.get("currency", "USD")),
                 passengers=int(w.get("passengers", defaults.get("passengers", 1))),
                 max_stops=w.get("max_stops", defaults.get("max_stops")),
-                target_price=w.get("target_price"),
+                target_price=w.get("target_price", defaults.get("target_price")),
                 keep_top=int(w.get("keep_top", defaults.get("keep_top", 10))),
             )
         )

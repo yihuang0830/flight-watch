@@ -81,6 +81,24 @@ watches:
 > 代价：解析靠英文文案定位，所以查询语言被锁死为 `en-US`。Google 改文案就会失效，
 > 届时 `price_level` 变成空值，但不影响价格抓取本身。
 
+## 微信提醒
+
+跌破 `target_price`（当前 800 USD）时推送到微信，走 [Server酱](https://sct.ftqq.com/)。
+
+**配置**（一次性）：
+1. 访问 [sct.ftqq.com](https://sct.ftqq.com/) 微信扫码登录，拿到 SendKey
+2. 仓库 Settings → Secrets and variables → Actions → New repository secret
+   名称 `SERVERCHAN_SEND_KEY`，值粘贴 SendKey
+3. 本地测试：`SERVERCHAN_SEND_KEY=xxx python -m flightwatch notify`
+
+**免费额度只有 5 条/天**，所以做了两层保护：
+- 一轮只发 **一条** 消息，把所有达标航线聚合进去（而不是 20 条航线发 20 条）
+- 同一航线同样的价格不重复发；只有「更便宜了」才再发一次；
+  价格涨回目标价之上会清除记录，下次再跌破可以重新提醒
+
+不想被打扰：`python -m flightwatch watch --no-notify`
+想看会发什么但不真发：`python -m flightwatch notify --dry-run`
+
 ## 24/7 运行
 
 `.github/workflows/watch.yml` 已配好：每天两轮，把 `flights.db` 提交回仓库保存历史，

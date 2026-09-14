@@ -6,6 +6,7 @@ defaults:
   seat: economy
   passengers: 1
   keep_top: 8          # 每条航线每天最多存 8 档报价
+  target_price: 800    # 跌破这个价就微信提醒
   # 刻意不设 max_stops：实测限制中转会让你错过更便宜的票
 
 watches:

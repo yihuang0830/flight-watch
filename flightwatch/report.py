@@ -87,9 +87,15 @@ def _verdict(s: dict) -> str:
     return f"中等水平（便宜过 {pct}% 的历史观测）"
 
 
+def by_price(summaries: list[dict]) -> list[dict]:
+    """便宜的排前面。盯 20 条航线的意义就在于横向比价，
+    按配置顺序排会让最低价埋在中间，等于让用户自己做排序。"""
+    return sorted(summaries, key=lambda s: (s["current"] is None, s["current"] or 0))
+
+
 def render_text(summaries: list[dict]) -> str:
     lines = []
-    for s in summaries:
+    for s in by_price(summaries):
         w = s["watch"]
         lines.append(f"\n{'=' * 64}")
         lines.append(f"{w.name}   {w.origin} → {w.dest}   [{', '.join(w.dates)}]")
@@ -150,6 +156,8 @@ def render_html(summaries: list[dict]) -> str:
         .card{background:#fff;border:1px solid #e8e8ec;border-radius:12px;
               padding:18px 20px;margin-bottom:18px}
         .route{font-size:17px;font-weight:600;margin:0}
+        .rk{display:inline-block;min-width:20px;color:#9ca3af;font-size:13px;
+            font-weight:500;margin-right:8px}
         .dates{color:#6b7280;font-size:13px;margin:2px 0 14px}
         .price{font-size:32px;font-weight:700;letter-spacing:-.5px}
         .price .cur{font-size:16px;font-weight:500;color:#6b7280;margin-right:4px}
@@ -172,10 +180,19 @@ def render_html(summaries: list[dict]) -> str:
         f"<p class='sub'>更新于 {now}</p>",
     ]
 
-    for s in summaries:
+    ranked = by_price(summaries)
+    if ranked and ranked[0]["current"] is not None:
+        b = ranked[0]
+        parts.append(
+            f"<p class='sub'>最低 <b>{b['watch'].currency} {b['current']}</b> · "
+            f"{b['watch'].origin} → {b['watch'].dest}</p>"
+        )
+
+    for rank, s in enumerate(ranked, 1):
         w = s["watch"]
         parts.append("<div class='card'>")
-        parts.append(f"<p class='route'>{w.origin} → {w.dest}</p>")
+        parts.append(f"<p class='route'><span class='rk'>{rank}</span>"
+                     f"{w.origin} → {w.dest}</p>")
         parts.append(f"<p class='dates'>{html.escape(' / '.join(w.dates))}</p>")
 
         if s["consecutive_failures"] >= 3:

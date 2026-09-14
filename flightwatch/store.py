@@ -47,6 +47,14 @@ CREATE TABLE IF NOT EXISTS insights (
     price_level TEXT NOT NULL       -- low / typical / high
 );
 CREATE INDEX IF NOT EXISTS idx_insights_watch ON insights (watch, fetched_at);
+
+-- 已提醒过的价格。Server酱免费额度仅 5 条/天，重复提醒会把额度耗光，
+-- 导致真正的好价反而推不出去。
+CREATE TABLE IF NOT EXISTS notifications (
+    watch      TEXT PRIMARY KEY,
+    sent_at    TEXT    NOT NULL,
+    price      INTEGER NOT NULL
+);
 """
 
 
@@ -146,3 +154,25 @@ def latest_offers(conn, watch_name: str, limit: int = 5) -> list[sqlite3.Row]:
         "SELECT * FROM offers WHERE watch=? AND fetched_at=? ORDER BY price LIMIT ?",
         (watch_name, row["t"], limit),
     ).fetchall()
+
+
+def last_notified_price(conn, watch_name: str) -> int | None:
+    r = conn.execute(
+        "SELECT price FROM notifications WHERE watch=?", (watch_name,)
+    ).fetchone()
+    return r["price"] if r else None
+
+
+def record_notification(conn, watch_name: str, price: int) -> None:
+    conn.execute(
+        "INSERT INTO notifications (watch, sent_at, price) VALUES (?,?,?)"
+        " ON CONFLICT(watch) DO UPDATE SET sent_at=excluded.sent_at, price=excluded.price",
+        (watch_name, utcnow(), price),
+    )
+    conn.commit()
+
+
+def clear_notification(conn, watch_name: str) -> None:
+    """价格涨回目标价之上时调用，让下次跌破能重新提醒。"""
+    conn.execute("DELETE FROM notifications WHERE watch=?", (watch_name,))
+    conn.commit()
