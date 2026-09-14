@@ -176,3 +176,16 @@ def clear_notification(conn, watch_name: str) -> None:
     """价格涨回目标价之上时调用，让下次跌破能重新提醒。"""
     conn.execute("DELETE FROM notifications WHERE watch=?", (watch_name,))
     conn.commit()
+
+
+def hours_since_last_success(conn) -> float | None:
+    """距上次成功抓取过去了多少小时。没有成功记录则返回 None。"""
+    r = conn.execute(
+        "SELECT MAX(fetched_at) AS t FROM fetch_log WHERE ok=1"
+    ).fetchone()
+    if not r or not r["t"]:
+        return None
+    last = dt.datetime.fromisoformat(r["t"])
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=dt.timezone.utc)
+    return (dt.datetime.now(dt.timezone.utc) - last).total_seconds() / 3600

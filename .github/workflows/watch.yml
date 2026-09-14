@@ -2,9 +2,26 @@ name: Flight Watch
 
 on:
   schedule:
-    # 每天 UTC 02:00 / 14:00 跑两轮。机票价格变动没那么快，抓太勤只会增加被限流的风险。
-    - cron: "0 2,14 * * *"
-  workflow_dispatch:
+    # 每天 5 轮，美国中部时间 09:00 / 13:00 / 16:30 / 20:30 / 23:30。
+    #
+    # GitHub cron 只认 UTC 且不处理夏令时，所以夏/冬两套时刻表都挂上，
+    # 同一时段会触发两次（相差 1 小时）。多出来的那次由 `flightwatch gate`
+    # 滤掉：距上次成功抓取不足 2 小时就跳过。
+    # 目标时段最小间隔 3 小时，所以正常轮次不会被误杀。
+    #
+    # 夏令时 CDT (UTC-5)，每年 3 月至 11 月
+    - cron: "0 14 * * *"      # 中部 09:00
+    - cron: "0 18 * * *"      # 中部 13:00
+    - cron: "30 21 * * *"     # 中部 16:30
+    - cron: "30 1 * * *"      # 中部 20:30
+    - cron: "30 4 * * *"      # 中部 23:30
+    # 冬令时 CST (UTC-6)，每年 11 月至次年 3 月
+    - cron: "0 15 * * *"      # 中部 09:00
+    - cron: "0 19 * * *"      # 中部 13:00
+    - cron: "30 22 * * *"     # 中部 16:30
+    - cron: "30 2 * * *"      # 中部 20:30
+    - cron: "30 5 * * *"      # 中部 23:30
+  workflow_dispatch:          # 手动触发时绕过闸门
 
 permissions:
   contents: write   # 需要把 flights.db 提交回仓库来保存历史
@@ -21,19 +38,27 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: 抓取（跌破目标价时自动推送微信）
+      - name: 判断本轮是否该跑
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "go=yes" >> "$GITHUB_OUTPUT"     # 手动触发一律执行
+          else
+            echo "go=$(python -m flightwatch gate --min-gap 2 | tail -1)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 抓取（并推送微信）
+        if: steps.gate.outputs.go == 'yes'
         env:
-          # 在 Settings → Secrets and variables → Actions 里添加这个 secret。
-          # 没配也不会报错，只是不推送。
           SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
         run: python -m flightwatch watch
 
       - name: 生成报告
-        if: always()        # 抓取失败也要出报告，报告里会显示失败告警
+        if: steps.gate.outputs.go == 'yes'
         run: python -m flightwatch report --html docs/index.html
 
       - name: 提交历史数据
-        if: always()
+        if: steps.gate.outputs.go == 'yes'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
