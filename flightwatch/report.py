@@ -39,6 +39,14 @@ def summarize(conn, watch, history_dir: str | None = None) -> dict:
     out["low"] = min(prices)
     out["high"] = max(prices)
 
+    if history_dir:
+        # 观测次数和价格区间以永久 CSV 为准：SQLite 只留最近几轮，
+        # 拿它算会把"已盯 300 次"说成"已盯 6 次"。
+        from . import history
+        n, lo, hi = history.stats(history_dir, watch.name)
+        if n:
+            out["n_observations"], out["low"], out["high"] = n, lo, hi
+
     # 当前价便宜过多少比例的历史观测。只有一次观测时无意义，留空。
     if len(prices) > 1:
         cheaper_than = sum(1 for p in prices if p > current)

@@ -89,3 +89,26 @@ def previous_min(root: str | Path, watch: str, before: str) -> int | None:
     if not rounds:
         return None
     return rounds[max(rounds)]
+
+
+def stats(root: str | Path, watch: str) -> tuple[int, int | None, int | None]:
+    """某航线的完整观测统计：(轮次数, 最低价, 最高价)。
+
+    读 CSV 而非 SQLite —— SQLite 只留最近几轮，问它"盯了多少次"会得到
+    严重偏低的数字。这里的 CSV 才是完整记录。
+    """
+    root = Path(root)
+    if not root.exists():
+        return 0, None, None
+    rounds: dict[str, int] = {}
+    for p in sorted(root.glob("*.csv")):
+        with p.open(newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row["watch"] != watch:
+                    continue
+                t, v = row["fetched_at"], int(row["min_price"])
+                rounds[t] = min(rounds.get(t, v), v)
+    if not rounds:
+        return 0, None, None
+    vals = list(rounds.values())
+    return len(rounds), min(vals), max(vals)

@@ -202,14 +202,23 @@ def mark_report_sent(conn, slot_date: str, slot: str) -> None:
     conn.commit()
 
 
-def prune(conn, keep_days: int = 14) -> int:
-    """删除过期的原始报价，返回删除行数。
+def prune(conn, keep_runs: int = 6) -> int:
+    """只保留最近 N 轮的报价明细，返回删除行数。
 
-    每 30 分钟抓一轮 = 每天约 1.3 万行。不清理的话三个月就是上百万行，
-    而这个库要进 git —— 仓库会被撑爆。
+    按**轮数**而非天数保留：扫描频率一改，按天数保留的数据量就会失控
+    （14 天 × 48 轮/天 = 672 轮 ≈ 42 MB，一天提交 5 次就是 6 GB/月）。
+
+    永久历史在 history/*.csv 里，这里只需留够两件事：
+    生成报告（最近一轮的明细）和对比上一轮。6 轮 = 3 小时，足够有余。
     状态表（notifications / reports_sent）体积极小且必须长期保留，不动。
     """
-    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=keep_days)).isoformat()
+    keep = [r["t"] for r in conn.execute(
+        "SELECT DISTINCT fetched_at AS t FROM offers ORDER BY t DESC LIMIT ?",
+        (keep_runs,),
+    )]
+    if not keep:
+        return 0
+    cutoff = min(keep)
     n = conn.execute("DELETE FROM offers WHERE fetched_at < ?", (cutoff,)).rowcount
     conn.execute("DELETE FROM insights WHERE fetched_at < ?", (cutoff,))
     conn.execute("DELETE FROM fetch_log WHERE fetched_at < ?", (cutoff,))

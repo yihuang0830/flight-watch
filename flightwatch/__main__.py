@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 from . import config, fetch, history, notify, report, store
@@ -34,7 +35,15 @@ def cmd_watch(args) -> int:
 
     n_ok = n_fail = 0
     hist_rows: list[dict] = []
+    started = time.monotonic()
     for i, (w, d) in enumerate(jobs):
+        # 整轮时间上限。上游偶尔会卡在超时重试上，实测一轮能拖到 17 分钟；
+        # 每 30 分钟跑一次的话，慢轮次会堆积并阻塞后续轮次。
+        # 宁可这轮少抓几条（下一轮 30 分钟后就补上），也不能让它无限拖。
+        if time.monotonic() - started > args.budget:
+            print(f"\n⏱ 已用满 {args.budget}s 预算，剩余 {len(jobs) - i} 条留给下一轮",
+                  file=sys.stderr)
+            break
         if i:
             fetch.polite_sleep(args.delay)   # 限速，避免被 Google 拦
         tag = f"[{i + 1}/{len(jobs)}]"
@@ -66,9 +75,9 @@ def cmd_watch(args) -> int:
         hp = history.append(args.history, fetched_at, hist_rows)
         print(f"已追加 {len(hist_rows)} 行历史 → {hp}")
 
-    removed = store.prune(conn, keep_days=args.keep_days)
+    removed = store.prune(conn, keep_runs=args.keep_runs)
     if removed:
-        print(f"已清理 {removed} 行过期数据（保留最近 {args.keep_days} 天）")
+        print(f"已清理 {removed} 行过期数据（保留最近 {args.keep_runs} 轮明细）")
 
     result = ""
     if not args.no_notify:
@@ -129,8 +138,10 @@ def main(argv=None) -> int:
     w.add_argument("--delay", type=float, default=fetch.DEFAULT_DELAY,
                    help="每次查询之间的间隔秒数，默认 3")
     w.add_argument("--no-notify", action="store_true", help="本轮不推送")
-    w.add_argument("--keep-days", type=int, default=14,
-                   help="SQLite 中原始报价的保留天数（历史 CSV 不受影响）")
+    w.add_argument("--budget", type=float, default=900,
+                   help="整轮抓取的秒数上限，超时则跳过剩余航线")
+    w.add_argument("--keep-runs", type=int, default=6,
+                   help="SQLite 中保留最近几轮明细（历史 CSV 不受影响）")
     w.add_argument("--dry-run", action="store_true",
                    help="只打印将要推送的内容，不真发、不记账")
     w.set_defaults(func=cmd_watch)
