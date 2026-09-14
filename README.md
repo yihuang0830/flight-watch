@@ -110,12 +110,40 @@ watches:
 
 `.github/workflows/watch.yml` 每 30 分钟跑一轮。
 
-### 为什么用固定间隔而不是定点 cron
+### 为什么不用 GitHub 自带的 cron
+
+**实测 `*/30` 在 11.5 小时内只触发了 1 次。** 结果是中部时间 09:00 的
+定时报告整个错过 —— 那个时段根本没有运行去触发它。GitHub 官方只承认
+"高峰期可能延迟"，实际上高频 schedule 会被大量丢弃。
+
+所以主触发源改为**外部定时服务**，POST 到 `repository_dispatch`：
+
+```
+POST https://api.github.com/repos/<owner>/<repo>/dispatches
+
+Headers:
+  Accept: application/vnd.github+json
+  Authorization: Bearer <PAT>
+  X-GitHub-Api-Version: 2022-11-28
+
+Body:
+  {"event_type":"scan"}
+```
+
+PAT 需要该仓库的 **Contents: write** 权限
+（[fine-grained token](https://github.com/settings/personal-access-tokens/new)）。
+
+原 `*/30` cron 保留作兜底：外部服务万一挂了，还能偶尔跑一跑。
+
+> 实测 GitHub runner 上抓 40 条只需约 3 分钟、零失败，并未被 Google 限速。
+> 30 分钟间隔在性能上完全够用，瓶颈只在触发可靠性。
+
+### 为什么报告时刻不写死成 cron
 
 GitHub cron 只认 UTC、不处理夏令时。若把 5 个报告时刻硬编码成 UTC，
 11 月换冬令时后本地时间会整体偏一小时。
 
-改为：cron 每 30 分钟触发，**「何时该发报告」交给代码判断**
+改为：每 30 分钟触发一次，**「何时该发报告」交给代码判断**
 （`notify.due_report_slot` 用 `zoneinfo` 按 `America/Chicago` 本地时间算）。
 夏令时切换完全不用改配置，顺带还支持了 30 分钟粒度的紧急扫描。
 
