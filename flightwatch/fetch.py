@@ -51,13 +51,20 @@ def _has_price(entry) -> bool:
         return False
 
 
-def parse_tolerant(html: str):
-    """容错解析。
+def parse_all(html: str):
+    """解析全部结果，合并 Google 返回的两组航班。
 
-    上游 parse_js 读价格时不做保护，**一条没有价格的行程会让整页结果全部丢失**
-    （实测 40 次查询里有 3 次因此归零）。这里先把坏条目从原始 payload 里剔掉，
-    再把清洗后的数据交回上游解析 —— 解析逻辑仍然是上游的，我们只负责过滤，
-    避免把那 60 行结构解析抄过来后和上游版本各走各路。
+    **上游 parse_js 只读 payload[3][0]，完全漏掉了 payload[2][0]。**
+    而便宜的航班恰恰在 payload[2] 里 —— 实测 LAX→CGK 12/16：
+        payload[2]: 698, 741, 1034, 1116, 1338   ← 上游完全看不到
+        payload[3]: 1031, 1176, 1383, 1500, ...  ← 上游只读这组
+    只读一组会让报价系统性偏高 30~50%，对一个盯低价的工具是致命的。
+
+    顺带处理另一个上游缺陷：parse_js 取价格时写死 `k[1][0][1]`，
+    个别缺价格的条目会让整页结果归零。这里先剔除坏条目。
+
+    做法是清洗 payload 后交回上游解析，而不是自己抄一遍 60 行结构解析 ——
+    那样会和上游版本各走各路。
     """
     script = LexborHTMLParser(html).css_first(r"script.ds\:1")
     if script is None:
@@ -66,11 +73,20 @@ def parse_tolerant(html: str):
     js = script.text()
     payload = json.loads(js.split("data:", 1)[1].rsplit(",", 1)[0])
 
-    entries = payload[3][0] or []
-    good = [k for k in entries if _has_price(k)]
-    if not good:
-        raise FetchError("该航线所有行程条目都缺少价格")
-    payload[3][0] = good
+    merged = []
+    for idx in (2, 3):
+        try:
+            entries = payload[idx][0] or []
+        except (IndexError, TypeError):
+            continue
+        merged.extend(k for k in entries if _has_price(k))
+
+    if not merged:
+        raise FetchError("未解析出任何带价格的行程")
+
+    while len(payload) <= 3:
+        payload.append(None)
+    payload[3] = [merged]
 
     # 重新拼成 parse_js 期望的 `data:<json>,` 形式
     return parse_js("data:" + json.dumps(payload) + ",")
@@ -165,11 +181,7 @@ def fetch_one(watch, depart_date: str, *, retries: int = 2, proxy: str | None = 
     for attempt in range(retries + 1):
         try:
             html = fetch_flights_html(q, proxy=proxy)   # 一次请求，两份数据
-            try:
-                result = parse(html)
-            except (IndexError, TypeError):
-                # 上游解析被个别坏条目噎住，剔掉它们重来
-                result = parse_tolerant(html)
+            result = parse_all(html)
         except Exception as e:  # 网络错误、解析错误、被限流都可能在这里
             last_err = e
             if attempt < retries:
