@@ -50,6 +50,16 @@ CREATE INDEX IF NOT EXISTS idx_insights_watch ON insights (watch, fetched_at);
 
 -- 已提醒过的价格。Server酱免费额度仅 5 条/天，重复提醒会把额度耗光，
 -- 导致真正的好价反而推不出去。
+-- 定时报告的发送记录，按"本地日期 + 时段"去重。
+-- 每 30 分钟扫一次，但每个时段一天只报一次；若某轮被延迟或跳过，
+-- 下一轮会自动补发，不会整段丢失。
+CREATE TABLE IF NOT EXISTS reports_sent (
+    slot_date TEXT NOT NULL,
+    slot      TEXT NOT NULL,
+    sent_at   TEXT NOT NULL,
+    PRIMARY KEY (slot_date, slot)
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     watch      TEXT PRIMARY KEY,
     sent_at    TEXT    NOT NULL,
@@ -178,14 +188,32 @@ def clear_notification(conn, watch_name: str) -> None:
     conn.commit()
 
 
-def hours_since_last_success(conn) -> float | None:
-    """距上次成功抓取过去了多少小时。没有成功记录则返回 None。"""
-    r = conn.execute(
-        "SELECT MAX(fetched_at) AS t FROM fetch_log WHERE ok=1"
-    ).fetchone()
-    if not r or not r["t"]:
-        return None
-    last = dt.datetime.fromisoformat(r["t"])
-    if last.tzinfo is None:
-        last = last.replace(tzinfo=dt.timezone.utc)
-    return (dt.datetime.now(dt.timezone.utc) - last).total_seconds() / 3600
+def report_already_sent(conn, slot_date: str, slot: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM reports_sent WHERE slot_date=? AND slot=?", (slot_date, slot)
+    ).fetchone() is not None
+
+
+def mark_report_sent(conn, slot_date: str, slot: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO reports_sent (slot_date, slot, sent_at) VALUES (?,?,?)",
+        (slot_date, slot, utcnow()),
+    )
+    conn.commit()
+
+
+def prune(conn, keep_days: int = 14) -> int:
+    """删除过期的原始报价，返回删除行数。
+
+    每 30 分钟抓一轮 = 每天约 1.3 万行。不清理的话三个月就是上百万行，
+    而这个库要进 git —— 仓库会被撑爆。
+    状态表（notifications / reports_sent）体积极小且必须长期保留，不动。
+    """
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=keep_days)).isoformat()
+    n = conn.execute("DELETE FROM offers WHERE fetched_at < ?", (cutoff,)).rowcount
+    conn.execute("DELETE FROM insights WHERE fetched_at < ?", (cutoff,))
+    conn.execute("DELETE FROM fetch_log WHERE fetched_at < ?", (cutoff,))
+    conn.commit()
+    if n:
+        conn.execute("VACUUM")          # 真正把文件缩小，否则 git 里体积不降
+    return n

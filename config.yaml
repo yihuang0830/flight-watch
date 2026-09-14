@@ -6,10 +6,13 @@ defaults:
   seat: economy
   passengers: 1
   keep_top: 8          # 每条航线每天最多存 8 档报价
-  target_price: 810    # 跌破这个价的航线会在消息里打 🎯
-  # 每轮都推送一份全量报告（一天 2 条，Server酱免费额度 5 条/天足够）。
-  # 好处是消息本身就是心跳：哪天没收到，就说明监控挂了。
-  notify_every_run: true
+  target_price: 810    # 定时报告里跌破这个价的航线会打 🎯
+  urgent_price: 800    # 任何航线跌破这个价，30 分钟内立刻单独推送一条
+
+  # 定时报告时刻（美国中部时间，自动处理夏令时）。
+  # 每轮都发的好处：消息本身就是心跳，哪天没收到就说明监控挂了。
+  report_timezone: America/Chicago
+  report_times: ["09:00", "13:00", "16:30", "20:30", "23:30"]
   # 刻意不设 max_stops：实测限制中转会让你错过更便宜的票
 
 watches:

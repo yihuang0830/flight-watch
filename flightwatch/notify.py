@@ -7,9 +7,11 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 import os
 import urllib.parse
 import urllib.request
+from zoneinfo import ZoneInfo
 
 API = "https://sctapi.ftqq.com/{key}.send"
 
@@ -27,6 +29,47 @@ def send(send_key: str, title: str, desp: str, *, timeout: int = 15) -> tuple[bo
         return False, f"Server酱返回异常: {body[:200]}"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
+
+
+def due_report_slot(conn, settings: dict, now: dt.datetime | None = None):
+    """判断当前是否该发定时报告，返回 (本地日期, 时段) 或 None。
+
+    用时区库按本地时间判断，而不是把时刻硬编码成 UTC cron ——
+    这样夏令时切换完全不用管。每个时段一天只发一次；某轮若被 GitHub
+    延迟或跳过，下一轮（30 分钟后）会自动补发。
+    """
+    times = settings.get("report_times") or []
+    if not times:
+        return None
+    tz = ZoneInfo(settings.get("report_timezone") or "America/Chicago")
+    now = (now or dt.datetime.now(dt.timezone.utc)).astimezone(tz)
+    today = now.date().isoformat()
+
+    passed = []
+    for t in times:
+        h, m = (int(x) for x in t.split(":"))
+        if (now.hour, now.minute) >= (h, m):
+            passed.append(t)
+    if not passed:
+        return None
+
+    latest = max(passed, key=lambda t: tuple(int(x) for x in t.split(":")))
+    from . import store
+    if store.report_already_sent(conn, today, latest):
+        return None
+    return today, latest
+
+
+def pick_urgent(summaries: list[dict], urgent_price) -> list[dict]:
+    """跌破紧急阈值的航线。这是要立刻打断你的那一类。"""
+    if urgent_price is None:
+        return []
+    out = []
+    for s in summaries:
+        if s["current"] is not None and s["current"] <= urgent_price:
+            out.append({"watch": s["watch"], "price": s["current"],
+                        "prev": None, "offers": s["latest_offers"]})
+    return out
 
 
 def pick_alerts(conn, summaries: list[dict]) -> list[dict]:
@@ -112,27 +155,61 @@ def build_message(alerts: list[dict], summaries: list[dict]) -> tuple[str, str]:
     return title, "\n".join(lines)
 
 
-def maybe_notify(conn, summaries: list[dict], *, dry_run: bool = False,
-                 every_run: bool = False) -> str:
-    """返回一句人类可读的结果说明。"""
+def maybe_notify(conn, summaries: list[dict], settings: dict, *,
+                 dry_run: bool = False) -> str:
+    """决定本轮发什么。两条独立路径：
+
+    1. **紧急**：任何航线跌破 urgent_price，立刻单独推一条（去重：同价不重发）。
+       这是唯一允许打断你的情况。
+    2. **定时**：到了配置的报告时段，推一份全量报告（兼作心跳）。
+
+    其余时候静默 —— 每 30 分钟推一条会让人直接把通知关掉，
+    那样真出好价时反而通知不到。
+    """
     from . import store
 
     key = os.environ.get("SERVERCHAN_SEND_KEY", "").strip()
-    alerts = pick_alerts(conn, summaries)
-    if not alerts and not every_run:
-        return "无需提醒（没有航线跌破目标价，或已提醒过且没更便宜）"
     if not any(s["current"] is not None for s in summaries):
         return "无数据可推送"
 
+    # ---- 路径 1：紧急 ----
+    urgent = [a for a in pick_urgent(summaries, settings.get("urgent_price"))
+              if (last := store.last_notified_price(conn, a["watch"].name)) is None
+              or a["price"] < last]
+    for s in summaries:                      # 涨回阈值之上则清除记录，便于下次再报
+        up = settings.get("urgent_price")
+        if up is not None and s["current"] is not None and s["current"] > up:
+            if store.last_notified_price(conn, s["watch"].name) is not None:
+                store.clear_notification(conn, s["watch"].name)
+
+    if urgent:
+        title, desp = build_message(urgent, summaries)
+        title = "🚨 " + title.lstrip("🎯✈️ ")
+        if dry_run:
+            return f"[试运行] 紧急推送: {title}"
+        if not key:
+            return f"{len(urgent)} 条跌破紧急阈值，但未配置 SERVERCHAN_SEND_KEY"
+        ok, msg = send(key, title, desp)
+        if ok:
+            for a in urgent:
+                store.record_notification(conn, a["watch"].name, a["price"])
+            return f"已紧急推送: {title}"
+        return f"紧急推送失败: {msg}"
+
+    # ---- 路径 2：定时报告 ----
+    due = due_report_slot(conn, settings)
+    if not due:
+        return "静默（无航线跌破紧急阈值，且未到报告时段）"
+
+    slot_date, slot = due
+    alerts = pick_alerts(conn, summaries)      # 810 以下的在报告里打 🎯
     title, desp = build_message(alerts, summaries)
     if dry_run:
-        return f"[试运行] 本应推送: {title}\n\n{desp}"
+        return f"[试运行] {slot} 定时报告: {title}"
     if not key:
-        return f"有 {len(alerts)} 条航线达标，但未配置 SERVERCHAN_SEND_KEY，没能推送"
-
-    ok, msg = send(key, title, desp)
+        return f"到了 {slot} 报告时段，但未配置 SERVERCHAN_SEND_KEY"
+    ok, msg = send(key, f"{title} · {slot}", desp)
     if ok:
-        for a in alerts:
-            store.record_notification(conn, a["watch"].name, a["price"])
-        return f"已推送微信: {title}"
-    return f"推送失败: {msg}"
+        store.mark_report_sent(conn, slot_date, slot)
+        return f"已推送 {slot} 定时报告: {title}"
+    return f"定时报告推送失败: {msg}"

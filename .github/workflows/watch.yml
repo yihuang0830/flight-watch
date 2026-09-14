@@ -1,30 +1,20 @@
 name: Flight Watch
 
 on:
+  # 每 30 分钟扫一次。用固定间隔而非定点时刻，是因为 GitHub cron 只认 UTC、
+  # 不处理夏令时；「何时该发报告」交给代码用时区库判断（notify.due_report_slot），
+  # 这样 11 月换冬令时不用改任何配置。
   schedule:
-    # 每天 5 轮，美国中部时间 09:00 / 13:00 / 16:30 / 20:30 / 23:30。
-    #
-    # GitHub cron 只认 UTC 且不处理夏令时，所以夏/冬两套时刻表都挂上，
-    # 同一时段会触发两次（相差 1 小时）。多出来的那次由 `flightwatch gate`
-    # 滤掉：距上次成功抓取不足 2 小时就跳过。
-    # 目标时段最小间隔 3 小时，所以正常轮次不会被误杀。
-    #
-    # 夏令时 CDT (UTC-5)，每年 3 月至 11 月
-    - cron: "0 14 * * *"      # 中部 09:00
-    - cron: "0 18 * * *"      # 中部 13:00
-    - cron: "30 21 * * *"     # 中部 16:30
-    - cron: "30 1 * * *"      # 中部 20:30
-    - cron: "30 4 * * *"      # 中部 23:30
-    # 冬令时 CST (UTC-6)，每年 11 月至次年 3 月
-    - cron: "0 15 * * *"      # 中部 09:00
-    - cron: "0 19 * * *"      # 中部 13:00
-    - cron: "30 22 * * *"     # 中部 16:30
-    - cron: "30 2 * * *"      # 中部 20:30
-    - cron: "30 5 * * *"      # 中部 23:30
-  workflow_dispatch:          # 手动触发时绕过闸门
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
 
 permissions:
-  contents: write   # 需要把 flights.db 提交回仓库来保存历史
+  contents: write
+
+# 上一轮没跑完就别开新的，避免并发写同一个 flights.db
+concurrency:
+  group: flight-watch
+  cancel-in-progress: false
 
 jobs:
   watch:
@@ -35,33 +25,49 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+
+      # 数据库在轮次之间靠缓存传递，而不是每轮都提交进 git。
+      # 每 30 分钟提交一次二进制库，实测一周就能让仓库涨到 4GB
+      # （git 存的是整份快照，不是差异）。
+      - name: 取回数据库
+        uses: actions/cache/restore@v4
+        with:
+          path: flights.db
+          key: flightdb-${{ github.run_id }}
+          restore-keys: flightdb-
 
       - run: pip install -r requirements.txt
 
-      - name: 判断本轮是否该跑
-        id: gate
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "go=yes" >> "$GITHUB_OUTPUT"     # 手动触发一律执行
-          else
-            echo "go=$(python -m flightwatch gate --min-gap 2 | tail -1)" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: 抓取（并推送微信）
-        if: steps.gate.outputs.go == 'yes'
+      - name: 抓取（跌破 800 立刻推送；到点发定时报告；其余静默）
+        id: scan
         env:
           SERVERCHAN_SEND_KEY: ${{ secrets.SERVERCHAN_SEND_KEY }}
         run: python -m flightwatch watch
 
+      - name: 保存数据库
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: flights.db
+          key: flightdb-${{ github.run_id }}
+
+      # 只有真发了消息的轮次才落 git —— 一天约 5 次，仓库增长可控。
+      # 缓存万一被 LRU 清掉，也能从最近一次提交恢复。
       - name: 生成报告
-        if: steps.gate.outputs.go == 'yes'
+        if: steps.scan.outputs.persist == 'yes'
         run: python -m flightwatch report --html docs/index.html
 
-      - name: 提交历史数据
-        if: steps.gate.outputs.go == 'yes'
+      - name: 提交数据
+        if: steps.scan.outputs.persist == 'yes'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add flights.db docs/index.html
-          git diff --staged --quiet || git commit -m "flightwatch: $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push
+          git diff --staged --quiet && exit 0
+          git commit -m "flightwatch: $(date -u +%Y-%m-%dT%H:%MZ)"
+          for i in 1 2 3; do
+            git pull --rebase --autostash && git push && exit 0
+            sleep 5
+          done
+          exit 1

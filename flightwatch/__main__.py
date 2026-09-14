@@ -1,10 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from . import config, fetch, notify, report, store
+
+
+def emit_persist(result: str) -> None:
+    """告诉 CI 本轮要不要把数据落进 git。
+
+    每 30 分钟提交一次二进制数据库会让仓库迅速膨胀（实测一周就到 4GB，
+    因为 git 存整份快照而非差异）。所以只在真发了消息的轮次提交——
+    一天约 5 次。其余轮次数据库靠 Actions 缓存在轮次间传递。
+    """
+    out = os.environ.get("GITHUB_OUTPUT")
+    if not out:
+        return
+    sent = result.startswith("已推送") or result.startswith("已紧急推送")
+    with open(out, "a", encoding="utf-8") as f:
+        f.write(f"persist={'yes' if sent else 'no'}\n")
 
 
 def cmd_watch(args) -> int:
@@ -38,11 +54,18 @@ def cmd_watch(args) -> int:
 
     print(f"\n完成: {n_ok} 成功 / {n_fail} 失败  →  {args.db}")
 
+    removed = store.prune(conn, keep_days=args.keep_days)
+    if removed:
+        print(f"已清理 {removed} 行过期数据（保留最近 {args.keep_days} 天）")
+
+    result = ""
     if not args.no_notify:
         st = config.load_settings(args.config)
         summaries = [report.summarize(conn, w) for w in watches]
-        print(notify.maybe_notify(conn, summaries, dry_run=args.dry_run,
-                                  every_run=st["notify_every_run"]))
+        result = notify.maybe_notify(conn, summaries, st, dry_run=args.dry_run)
+        print(result)
+
+    emit_persist(result)
 
     # 全军覆没时用退出码报警，便于 cron / CI 感知
     if n_ok == 0 and n_fail > 0:
@@ -51,30 +74,14 @@ def cmd_watch(args) -> int:
     return 0
 
 
-def cmd_gate(args) -> int:
-    """给 CI 用的闸门：距上次成功抓取太近就跳过本轮。
-
-    GitHub cron 只认 UTC、不懂夏令时，所以工作流里挂了夏/冬令时两套时刻表
-    （同一时段会触发两次，相差 1 小时）。这里靠"间隔不足就跳过"把重复的那次
-    滤掉 —— 比按时刻硬匹配更稳，因为 GitHub 定时任务经常延迟几十分钟。
-    """
-    conn = store.connect(args.db)
-    h = store.hours_since_last_success(conn)
-    go = h is None or h >= args.min_gap
-    print("yes" if go else "no")
-    if not go:
-        print(f"距上次成功抓取仅 {h:.1f} 小时（阈值 {args.min_gap}），跳过本轮",
-              file=sys.stderr)
-    return 0
-
-
 def cmd_notify(args) -> int:
     watches = config.load(args.config)
     st = config.load_settings(args.config)
     conn = store.connect(args.db)
     summaries = [report.summarize(conn, w) for w in watches]
-    print(notify.maybe_notify(conn, summaries, dry_run=args.dry_run,
-                              every_run=st["notify_every_run"]))
+    result = notify.maybe_notify(conn, summaries, st, dry_run=args.dry_run)
+    print(result)
+    emit_persist(result)
     return 0
 
 
@@ -107,13 +114,11 @@ def main(argv=None) -> int:
     w.add_argument("--delay", type=float, default=fetch.DEFAULT_DELAY,
                    help="每次查询之间的间隔秒数，默认 3")
     w.add_argument("--no-notify", action="store_true", help="本轮不推送")
+    w.add_argument("--keep-days", type=int, default=14,
+                   help="原始报价保留天数，超期自动清理")
     w.add_argument("--dry-run", action="store_true",
                    help="只打印将要推送的内容，不真发、不记账")
     w.set_defaults(func=cmd_watch)
-
-    g = sub.add_parser("gate", parents=[common], help="CI 闸门：输出 yes/no")
-    g.add_argument("--min-gap", type=float, default=2.0, help="最小间隔小时数")
-    g.set_defaults(func=cmd_gate)
 
     n = sub.add_parser("notify", parents=[common], help="基于已有数据检查并推送")
     n.add_argument("--dry-run", action="store_true")
