@@ -11,7 +11,7 @@ import html
 from . import store
 
 
-def summarize(conn, watch) -> dict:
+def summarize(conn, watch, history_dir: str | None = None) -> dict:
     hist = store.best_price_history(conn, watch.name)
     latest = store.latest_offers(conn, watch.name, limit=5)
     fails = store.consecutive_failures(conn, watch.name)
@@ -46,6 +46,12 @@ def summarize(conn, watch) -> dict:
 
     if len(prices) >= 2:
         out["delta_prev"] = current - prices[-2]
+    elif history_dir:
+        # SQLite 里只有一轮（比如 CI 缓存刚丢），回退到永久历史 CSV
+        from . import history
+        prev = history.previous_min(history_dir, watch.name, hist[-1][0])
+        if prev is not None:
+            out["delta_prev"] = current - prev
 
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)).isoformat()
     old = [p for t, p in hist if t < cutoff]

@@ -52,18 +52,22 @@ jobs:
           path: flights.db
           key: flightdb-${{ github.run_id }}
 
-      # 只有真发了消息的轮次才落 git —— 一天约 5 次，仓库增长可控。
-      # 缓存万一被 LRU 清掉，也能从最近一次提交恢复。
       - name: 生成报告
         if: steps.scan.outputs.persist == 'yes'
         run: python -m flightwatch report --html docs/index.html
 
+      # 历史 CSV 每轮都提交：纯文本追加，git 增量压缩有效，
+      # 且按天分文件 —— 昨天的文件写完即不再变动。
+      # 数据库（二进制）只在发了消息的轮次提交，否则仓库会被撑爆。
       - name: 提交数据
-        if: steps.scan.outputs.persist == 'yes'
+        if: always()
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add flights.db docs/index.html
+          git add history/
+          if [ "${{ steps.scan.outputs.persist }}" = "yes" ]; then
+            git add flights.db docs/index.html
+          fi
           git diff --staged --quiet && exit 0
           git commit -m "flightwatch: $(date -u +%Y-%m-%dT%H:%MZ)"
           for i in 1 2 3; do

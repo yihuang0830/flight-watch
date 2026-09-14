@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import config, fetch, notify, report, store
+from . import config, fetch, history, notify, report, store
 
 
 def emit_persist(result: str) -> None:
@@ -33,6 +33,7 @@ def cmd_watch(args) -> int:
     print(f"本轮 {len(watches)} 条航线 / {len(jobs)} 次查询，预计 {est} 分钟\n")
 
     n_ok = n_fail = 0
+    hist_rows: list[dict] = []
     for i, (w, d) in enumerate(jobs):
         if i:
             fetch.polite_sleep(args.delay)   # 限速，避免被 Google 拦
@@ -47,12 +48,23 @@ def cmd_watch(args) -> int:
 
         n_ok += 1
         store.save_offers(conn, fetched_at, w, d, res.offers)
+        hist_rows.append({
+            "fetched_at": fetched_at, "watch": w.name,
+            "origin": w.origin, "dest": w.dest, "depart_date": d,
+            "currency": w.currency, "min_price": res.offers[0]["price"],
+            "price_level": res.price_level or "",
+        })
         store.save_insight(conn, fetched_at, w.name, d, res.price_level)
         store.log_fetch(conn, fetched_at, w.name, d, ok=True, n_offers=len(res.offers))
         lvl = f"  [{res.price_level}]" if res.price_level else ""
         print(f"  {tag} ✓ {w.name} {d}: 最低 {w.currency} {res.offers[0]['price']}{lvl}")
 
     print(f"\n完成: {n_ok} 成功 / {n_fail} 失败  →  {args.db}")
+
+    if hist_rows:
+        # 永久历史，与 SQLite 的清理策略无关
+        hp = history.append(args.history, fetched_at, hist_rows)
+        print(f"已追加 {len(hist_rows)} 行历史 → {hp}")
 
     removed = store.prune(conn, keep_days=args.keep_days)
     if removed:
@@ -61,7 +73,7 @@ def cmd_watch(args) -> int:
     result = ""
     if not args.no_notify:
         st = config.load_settings(args.config)
-        summaries = [report.summarize(conn, w) for w in watches]
+        summaries = [report.summarize(conn, w, args.history) for w in watches]
         result = notify.maybe_notify(conn, summaries, st, dry_run=args.dry_run)
         print(result)
 
@@ -78,7 +90,7 @@ def cmd_notify(args) -> int:
     watches = config.load(args.config)
     st = config.load_settings(args.config)
     conn = store.connect(args.db)
-    summaries = [report.summarize(conn, w) for w in watches]
+    summaries = [report.summarize(conn, w, args.history) for w in watches]
     result = notify.maybe_notify(conn, summaries, st, dry_run=args.dry_run)
     print(result)
     emit_persist(result)
@@ -88,7 +100,7 @@ def cmd_notify(args) -> int:
 def cmd_report(args) -> int:
     watches = config.load(args.config)
     conn = store.connect(args.db)
-    summaries = [report.summarize(conn, w) for w in watches]
+    summaries = [report.summarize(conn, w, args.history) for w in watches]
     print(report.render_text(summaries))
     if args.html:
         Path(args.html).write_text(report.render_html(summaries), encoding="utf-8")
@@ -100,12 +112,15 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="flightwatch", description="国际机票价格监控")
     p.add_argument("--config", default="config.yaml")
     p.add_argument("--db", default="flights.db")
+    p.add_argument("--history", default="history",
+                   help="永久价格历史目录（按天分 CSV）")
 
     # 同样的选项挂到子命令上，让 `watch --config x` 和 `--config x watch` 都能用。
     # SUPPRESS 保证子命令未显式传参时不会用 None 覆盖掉顶层的值。
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=argparse.SUPPRESS)
     common.add_argument("--db", default=argparse.SUPPRESS)
+    common.add_argument("--history", default=argparse.SUPPRESS)
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -115,7 +130,7 @@ def main(argv=None) -> int:
                    help="每次查询之间的间隔秒数，默认 3")
     w.add_argument("--no-notify", action="store_true", help="本轮不推送")
     w.add_argument("--keep-days", type=int, default=14,
-                   help="原始报价保留天数，超期自动清理")
+                   help="SQLite 中原始报价的保留天数（历史 CSV 不受影响）")
     w.add_argument("--dry-run", action="store_true",
                    help="只打印将要推送的内容，不真发、不记账")
     w.set_defaults(func=cmd_watch)
