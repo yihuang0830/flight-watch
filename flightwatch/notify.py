@@ -60,6 +60,25 @@ def due_report_slot(conn, settings: dict, now: dt.datetime | None = None):
     return today, latest
 
 
+def in_quiet_hours(settings: dict, now: dt.datetime | None = None) -> bool:
+    """当前是否处于免打扰时段（按本地时区，支持跨午夜）。
+
+    只压制紧急推送；抓取和存储照常，所以醒来后第一轮就能看到夜里的价格。
+    定时报告时刻本来就都排在时段之外，不受影响。
+    """
+    win = settings.get("quiet_hours") or []
+    if len(win) != 2:
+        return False
+    tz = ZoneInfo(settings.get("report_timezone") or "America/Chicago")
+    now = (now or dt.datetime.now(dt.timezone.utc)).astimezone(tz)
+    cur = (now.hour, now.minute)
+    start = tuple(int(x) for x in win[0].split(":"))
+    end = tuple(int(x) for x in win[1].split(":"))
+    if start <= end:
+        return start <= cur < end
+    return cur >= start or cur < end      # 跨午夜，例如 23:00 → 08:00
+
+
 def pick_urgent(summaries: list[dict], urgent_price) -> list[dict]:
     """跌破紧急阈值的航线。这是要立刻打断你的那一类。"""
     if urgent_price is None:
@@ -174,6 +193,17 @@ def maybe_notify(conn, summaries: list[dict], settings: dict, *,
 
     # ---- 路径 1：紧急 ----
     urgent = pick_urgent(summaries, settings.get("urgent_price"))
+
+    if urgent and in_quiet_hours(settings):
+        urgent = []                       # 夜里不吵醒，数据照常入库
+
+    cooldown = settings.get("urgent_cooldown_hours") or 0
+    if urgent and cooldown:
+        # 同一条航线在冷却期内最多提醒一次。价格长期低于阈值时，
+        # 没有冷却就是每 30 分钟一条、一天 48 条。
+        urgent = [a for a in urgent
+                  if (h := store.hours_since_notified(conn, a["watch"].name)) is None
+                  or h >= cooldown]
 
     if not settings.get("urgent_repeat"):
         # 默认只在"比上次提醒更便宜"时再报，避免同一个价格反复打扰。

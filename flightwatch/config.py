@@ -80,6 +80,8 @@ def load_settings(path: str | Path) -> dict:
     return {
         "urgent_price": d.get("urgent_price"),
         "urgent_repeat": bool(d.get("urgent_repeat", False)),
+        "urgent_cooldown_hours": float(d.get("urgent_cooldown_hours", 0) or 0),
+        "quiet_hours": list(d.get("quiet_hours") or []),
         "report_timezone": d.get("report_timezone", "America/Chicago"),
         "report_times": list(d.get("report_times") or []),
     }

@@ -226,3 +226,16 @@ def prune(conn, keep_runs: int = 6) -> int:
     if n:
         conn.execute("VACUUM")          # 真正把文件缩小，否则 git 里体积不降
     return n
+
+
+def hours_since_notified(conn, watch_name: str) -> float | None:
+    """距上次给该航线发提醒过去了多少小时。没发过则返回 None。"""
+    r = conn.execute(
+        "SELECT sent_at FROM notifications WHERE watch=?", (watch_name,)
+    ).fetchone()
+    if not r or not r["sent_at"]:
+        return None
+    last = dt.datetime.fromisoformat(r["sent_at"])
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=dt.timezone.utc)
+    return (dt.datetime.now(dt.timezone.utc) - last).total_seconds() / 3600
