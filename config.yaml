@@ -7,11 +7,11 @@ defaults:
   seat: economy
   passengers: 1
   keep_top: 8
-  target_price: 120    # 报告里跌破这个价的航线打 🎯
-  urgent_price: 120    # 任何航线跌破这个价就推送
-  urgent_repeat: true        # 每轮都报，不要求"比上次更便宜"
-  urgent_cooldown_hours: 4   # 但同一条航线 4 小时内最多报一次
-  quiet_hours: ["00:00", "08:00"]   # 免打扰（本地时间），夜里不推送
+  target_price: 120    # 报告里跌破这个价的航线打 🎯（只做标记，不单独推送）
+
+  # 不做紧急推送：只在下面这几个时刻发报告。
+  # urgent_price 留空即关闭该路径。
+  urgent_price:
 
   report_timezone: America/Chicago
   report_times: ["09:00", "13:00", "16:30", "20:30", "23:30"]
