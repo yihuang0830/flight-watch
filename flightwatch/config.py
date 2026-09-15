@@ -79,6 +79,7 @@ def load_settings(path: str | Path) -> dict:
     d = raw.get("defaults") or {}
     return {
         "urgent_price": d.get("urgent_price"),
+        "urgent_repeat": bool(d.get("urgent_repeat", False)),
         "report_timezone": d.get("report_timezone", "America/Chicago"),
         "report_times": list(d.get("report_times") or []),
     }

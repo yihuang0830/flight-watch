@@ -7,8 +7,9 @@ defaults:
   seat: economy
   passengers: 1
   keep_top: 8
-  target_price: 130    # 报告里跌破这个价的航线打 🎯
-  urgent_price: 130    # 任何航线跌破这个价，30 分钟内立刻单独推送
+  target_price: 120    # 报告里跌破这个价的航线打 🎯
+  urgent_price: 120    # 任何航线跌破这个价就推送
+  urgent_repeat: true  # 每轮都报，不要求"比上次更便宜"
 
   report_timezone: America/Chicago
   report_times: ["09:00", "13:00", "16:30", "20:30", "23:30"]

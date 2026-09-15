@@ -173,14 +173,20 @@ def maybe_notify(conn, summaries: list[dict], settings: dict, *,
         return "无数据可推送"
 
     # ---- 路径 1：紧急 ----
-    urgent = [a for a in pick_urgent(summaries, settings.get("urgent_price"))
-              if (last := store.last_notified_price(conn, a["watch"].name)) is None
-              or a["price"] < last]
-    for s in summaries:                      # 涨回阈值之上则清除记录，便于下次再报
-        up = settings.get("urgent_price")
-        if up is not None and s["current"] is not None and s["current"] > up:
-            if store.last_notified_price(conn, s["watch"].name) is not None:
-                store.clear_notification(conn, s["watch"].name)
+    urgent = pick_urgent(summaries, settings.get("urgent_price"))
+
+    if not settings.get("urgent_repeat"):
+        # 默认只在"比上次提醒更便宜"时再报，避免同一个价格反复打扰。
+        # 开了 urgent_repeat 则每轮都报 —— 代价是价格长期低于阈值时，
+        # 每 30 分钟就是一条消息（一天最多 48 条）。
+        urgent = [a for a in urgent
+                  if (last := store.last_notified_price(conn, a["watch"].name)) is None
+                  or a["price"] < last]
+        for s in summaries:                  # 涨回阈值之上则清除记录，便于下次再报
+            up = settings.get("urgent_price")
+            if up is not None and s["current"] is not None and s["current"] > up:
+                if store.last_notified_price(conn, s["watch"].name) is not None:
+                    store.clear_notification(conn, s["watch"].name)
 
     if urgent:
         title, desp = build_message(urgent, summaries)
