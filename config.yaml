@@ -1,125 +1,29 @@
-# 美国 → 东南亚，4 个出发地 × 5 个目的地 = 20 条航线
-# 出发日: 12/16、12/17，不限时段、不限中转次数
+# 两条航线，不限中转、不限时段
+#   STL → LAS        12/16、12/17
+#   首尔 → 三亚       12/19、12/20
 
 defaults:
   currency: USD
   seat: economy
   passengers: 1
-  keep_top: 8          # 每条航线每天最多存 8 档报价
-  target_price: 810    # 定时报告里跌破这个价的航线会打 🎯
-  urgent_price: 800    # 任何航线跌破这个价，30 分钟内立刻单独推送一条
+  keep_top: 8
+  target_price: 130    # 报告里跌破这个价的航线打 🎯
+  urgent_price: 130    # 任何航线跌破这个价，30 分钟内立刻单独推送
 
-  # 定时报告时刻（美国中部时间，自动处理夏令时）。
-  # 每轮都发的好处：消息本身就是心跳，哪天没收到就说明监控挂了。
   report_timezone: America/Chicago
   report_times: ["09:00", "13:00", "16:30", "20:30", "23:30"]
-  # 刻意不设 max_stops：实测限制中转会让你错过更便宜的票
 
 watches:
-  # ---------- 拉斯维加斯 LAS ----------
-  - name: LAS-SGN           # 拉斯维加斯 → 胡志明市
-    from: LAS
-    to: SGN
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: LAS-HAN           # 拉斯维加斯 → 河内
-    from: LAS
-    to: HAN
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: LAS-DAD           # 拉斯维加斯 → 岘港
-    from: LAS
-    to: DAD
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: LAS-CGK           # 拉斯维加斯 → 雅加达
-    from: LAS
-    to: CGK
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: LAS-BKK           # 拉斯维加斯 → 曼谷
-    from: LAS
-    to: BKK
+  - name: STL-LAS
+    from: STL
+    to: LAS
     trip: one-way
     dates: [2026-12-16, 2026-12-17]
 
-  # ---------- 旧金山 SFO ----------
-  - name: SFO-SGN           # 旧金山 → 胡志明市
-    from: SFO
-    to: SGN
+  # SEL 是首尔的城市代码，同时覆盖仁川(ICN)与金浦(GMP)。
+  # 实测只写 ICN 会漏掉金浦出发的选项，写 SEL 由 Google 自动挑最优。
+  - name: SEL-SYX
+    from: SEL
+    to: SYX
     trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: SFO-HAN           # 旧金山 → 河内
-    from: SFO
-    to: HAN
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: SFO-DAD           # 旧金山 → 岘港
-    from: SFO
-    to: DAD
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: SFO-CGK           # 旧金山 → 雅加达
-    from: SFO
-    to: CGK
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: SFO-BKK           # 旧金山 → 曼谷
-    from: SFO
-    to: BKK
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-
-  # ---------- 洛杉矶 LAX ----------
-  - name: LAX-SGN           # 洛杉矶 → 胡志明市
-    from: LAX
-    to: SGN
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: LAX-HAN           # 洛杉矶 → 河内
-    from: LAX
-    to: HAN
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: LAX-DAD           # 洛杉矶 → 岘港
-    from: LAX
-    to: DAD
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: LAX-CGK           # 洛杉矶 → 雅加达
-    from: LAX
-    to: CGK
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: LAX-BKK           # 洛杉矶 → 曼谷
-    from: LAX
-    to: BKK
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-
-  # ---------- 芝加哥 ORD ----------
-  - name: ORD-SGN           # 芝加哥 → 胡志明市
-    from: ORD
-    to: SGN
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: ORD-HAN           # 芝加哥 → 河内
-    from: ORD
-    to: HAN
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: ORD-DAD           # 芝加哥 → 岘港
-    from: ORD
-    to: DAD
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: ORD-CGK           # 芝加哥 → 雅加达
-    from: ORD
-    to: CGK
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
-  - name: ORD-BKK           # 芝加哥 → 曼谷
-    from: ORD
-    to: BKK
-    trip: one-way
-    dates: [2026-12-16, 2026-12-17]
+    dates: [2026-12-19, 2026-12-20]
