@@ -1,6 +1,7 @@
-# 两条航线，不限中转、不限时段
-#   STL → LAS        12/16、12/17
-#   首尔 → 三亚       12/19、12/20
+# 监控航线，不限中转、不限时段
+#   STL → LAS         12/16、12/17          目标价 120
+#   首尔 → 三亚        12/19、12/20          目标价 120
+#   上海 → 东京        12/16、12/17、12/18   目标价 150
 
 defaults:
   currency: USD
@@ -30,3 +31,20 @@ watches:
     to: SYX
     trip: one-way
     dates: [2026-12-19, 2026-12-20]
+
+  # 上海必须拆成两条：SHA 只代表虹桥机场，不是上海的城市代码
+  # （实测 SHA→TYO 会绕道首尔金浦 $281，而 PVG→TYO 直飞仅 $148）。
+  # TYO 则是有效的东京城市码，实测同时覆盖成田(NRT)与羽田(HND)。
+  - name: PVG-TYO
+    from: PVG
+    to: TYO
+    trip: one-way
+    dates: [2026-12-16, 2026-12-17, 2026-12-18]
+    target_price: 150
+
+  - name: SHA-TYO
+    from: SHA
+    to: TYO
+    trip: one-way
+    dates: [2026-12-16, 2026-12-17, 2026-12-18]
+    target_price: 150
